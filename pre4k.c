@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <sys/types.h>
 
 int accept_requests = 0;
@@ -93,6 +94,13 @@ maybe_get_signo()
 void
 sleep_master()
 {
+    printf("sleeping");
+
+}
+
+void
+wakeup_master()
+{
 
 }
 
@@ -103,9 +111,16 @@ murder_workers()
 }
 
 void
-wakeup()
-{
+set_pipe(int[2] fd) {
+    // set non blocking
+    int flags = fcntl(fd, F_GETTL);
+    flags = flags | O_NONBLOCK;
+    fcntl(fd, F_SETFL, flags);
 
+    // close on exec
+    flags = fcntl(fd, F_GETFD);
+    flags = flags | FD_CLOEXEC;
+    fcntl(fd, F_SETFD, flags);
 }
 
 int
@@ -113,7 +128,10 @@ main(int argc, char** argv)
 {
     int signo;
 
+    printf("starting pre4k");
+
     pipe(pipe_fd);
+    set_pipe(pipe_fd);
 
     start();
     manage_workers();
@@ -166,7 +184,7 @@ main(int argc, char** argv)
                 printf("handling signal: SIGWINCH");
                 sigwinch_handler(signo);
             }
-            wakeup();
+            wakeup_master();
         }
 
     }
