@@ -6,6 +6,8 @@
 #include <sys/types.h>
 #include <sys/select.h>
 
+typedef enum {false, true} bool;
+
 void wakeup_master();
 
 int accept_requests = 0;
@@ -19,49 +21,74 @@ char pipe_buf[2];
 
 typedef struct _queue {
     int length;
-    int current;
+    int front;
+    int rear;
+    int count;
     int queue[5];
 } Queue ;
 
 Queue queue = {
     .length = 5,
-    .current = -1,
+    .front = 0,
+    .rear = -1,
+    .count = 0,
 };
 
-void
-debug_queue(Queue queue)
+int
+queue_peek(Queue* queue)
 {
-    printf("debug: queue current %d, values: ", queue.current);
-    for (int i = 0; i < queue.length; i++) {
-        printf("%d ", queue.queue[i]);
+    return queue->queue[queue->front];
+}
+
+bool
+queue_is_empty(Queue* queue) {
+    return queue->count == 0;
+}
+
+bool
+queue_is_full(Queue* queue) {
+    return queue->count == queue->length;
+}
+
+bool
+queue_get_size(Queue* queue) {
+    return queue->count;
+}
+
+void
+queue_debug(Queue* queue)
+{
+    printf("debug: queue %d - %d, values: ", queue->front, queue->rear);
+    for (int i = queue->front; i <= queue->rear; i++) {
+        printf("%d ", queue->queue[i]);
     }
     printf("\n");
 }
 
-int
-push_queue(Queue queue, int elem)
+void
+queue_insert(Queue* queue, int elem)
 {
-    queue.current += 1;
-    queue.current %= queue.length;
-    queue.queue[queue.current] = elem;
-    debug_queue(queue);
-    return 0;
-}
-
-int
-pop_queue(Queue queue) {
-    if (queue.current < 0) {
-        printf("error: pre4k can't pop element from empty queue");
-        exit(1);
+    if (!queue_is_full(queue)) {
+        if (queue->rear == queue->length - 1) {
+            queue->rear = -1;
+        }
+        queue->queue[++queue->rear] = elem;
+        queue->count++;
     }
-    int elem = queue.queue[queue.current];
-    queue.current -= 1;
-    return elem;
 }
 
 int
-count_queue(Queue queue) {
-    return queue.current;
+queue_remove(Queue* queue) {
+    if (!queue_is_empty(queue)) {
+        int elem = queue->queue[queue->front++];
+        if (queue->front == queue->length) {
+            queue->front = 0;
+            queue->rear = -1;
+        }
+        queue->count--;
+        return elem;
+    }
+    return -1;
 }
 
 void
@@ -73,7 +100,8 @@ sigchld_handler(int signo)
 void
 sigint_handler(int signo)
 {
-
+    // fixme
+    exit(0);
 }
 
 void
@@ -127,7 +155,7 @@ sigwinch_handler(int signo) {
 void
 pre4k_buff_signals(int signo) {
     printf("info: receive signal: %d\n", signo);
-    push_queue(queue, signo);
+    queue_insert(&queue, signo);
     wakeup_master();
 }
 
@@ -169,10 +197,10 @@ manage_workers()
 int
 maybe_get_signo()
 {
-    if (count_queue(queue) == -1) {
+    if (queue_get_size(&queue) == 0) {
         return 0;
     } else {
-        int signo = pop_queue(queue);
+        int signo = queue_remove(&queue);
         return signo;
     }
 }
@@ -191,7 +219,7 @@ sleep_master()
 
     int ready = select(FD_SETSIZE, &rset, NULL, NULL, &timeout);
     if (ready <= 0) {
-        printf("debug: sleeping...\n");
+        // printf("debug: sleeping...\n");
         return;
     } else {
         // fixme: EAGAIN, EINTR
@@ -208,7 +236,7 @@ wakeup_master()
 {
     // fixme: EAGAIN, EINTR
     write(pipe_fd[1], ".", 1);
-    printf("debug: pre4k wrote . to pipe.\n");
+    // printf("debug: pre4k wrote . to pipe.\n");
 }
 
 void
@@ -249,20 +277,8 @@ main(int argc, char** argv)
             sleep_master();
             murder_workers();
             manage_workers();
-        } else if (
-                signo != SIGINT ||
-                signo != SIGQUIT ||
-                signo != SIGTERM ||
-                signo != SIGTTIN ||
-                signo != SIGHUP ||
-                signo != SIGTTOU ||
-                signo != SIGUSR1 ||
-                signo != SIGUSR2 ||
-                signo != SIGWINCH
-                ) {
-            // capture unknown signals
-            printf("warning: ignoring unknown signal: %d", signo);
         } else {
+            printf("info: handling signal: %d\n", signo);
             // capture available signals
             if (signo == SIGINT) {
                 printf("handling signal: SIGINT");
@@ -291,6 +307,9 @@ main(int argc, char** argv)
             } else if (signo == SIGWINCH) {
                 printf("handling signal: SIGWINCH");
                 sigwinch_handler(signo);
+            } else {
+                printf("warning: ignoring unknown signal: %d, %d", signo, SIGINT);
+                continue;
             }
             wakeup_master();
         }
