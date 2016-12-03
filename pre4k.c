@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include <time.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -55,7 +56,7 @@ Queue queue = {
 
 Workers workers = {
     .count = 1024,
-    .current = 0,
+    .current = -1,
 };
 
 int
@@ -176,6 +177,11 @@ sigusr2_handler(int signo) {
 void
 sigwinch_handler(int signo) {
 
+}
+
+int
+workers_size(Workers *workers) {
+    return workers->current + 1;
 }
 
 void
@@ -307,7 +313,10 @@ kill_worker(pid_t pid, int signo)
 void
 kill_workers(int signo)
 {
-    for(int i = workers.count - 1; i >= 0; i--) {
+    if (workers_size(&workers)== 0) {
+        return;
+    }
+    for(int i = workers_size(&workers) - 1; i >= 0; i--) {
         kill_worker(workers.workers[i], signo);
     }
 }
@@ -319,6 +328,31 @@ murder_workers()
         // no need to murder workers.
         return;
     }
+}
+
+void
+stop_workers(bool graceful)
+{
+    // fixme: close listeners
+
+    float limit = (float)time(NULL) + graceful_timeout;
+
+    if (graceful) {
+        kill_workers(SIGTERM);
+    } else {
+        kill_workers(SIGQUIT);
+    }
+
+    while (workers_size(&workers) && time(NULL) < limit) {
+        sleep(1);
+    }
+
+    kill_workers(SIGKILL);
+}
+
+void
+stop_workers_at_exit() {
+    stop_workers(false);
 }
 
 void
@@ -345,7 +379,11 @@ main(int argc, char** argv)
     set_pipe(pipe_fd[0]);
     set_pipe(pipe_fd[1]);
 
+    atexit(stop_workers_at_exit);
+
     start();
+    pre4k_debug();
+
     manage_workers();
     while(1) {
         if ((signo = maybe_get_signo()) == 0) {
@@ -357,34 +395,34 @@ main(int argc, char** argv)
             printf("info: handling signal: %d\n", signo);
             // capture available signals
             if (signo == SIGINT) {
-                printf("handling signal: SIGINT");
+                printf("handling signal: SIGINT\n");
                 sigint_handler(signo);
             } else if (signo == SIGHUP) {
-                printf("handling signal: SIGHUP");
+                printf("handling signal: SIGHUP\n");
                 sighup_handler(signo);
             } else if (signo == SIGQUIT) {
-                printf("handling signal: SIGQUIT");
+                printf("handling signal: SIGQUIT\n");
                 sigquit_handler(signo);
             } else if (signo == SIGTERM) {
-                printf("handling signal: SIGTERM");
+                printf("handling signal: SIGTERM\n");
                 sigterm_handler(signo);
             } else if (signo == SIGTTIN) {
-                printf("handling signal: SIGTTIN");
+                printf("handling signal: SIGTTIN\n");
                 sigttin_handler(signo);
             } else if (signo == SIGTTOU) {
-                printf("handling signal: SIGTTOU");
+                printf("handling signal: SIGTTOU\n");
                 sigttou_handler(signo);
             } else if (signo == SIGUSR1) {
-                printf("handling signal: SIGUSR1");
+                printf("handling signal: SIGUSR1\n");
                 sigusr1_handler(signo);
             } else if (signo == SIGUSR2) {
-                printf("handling signal: SIGUSR2");
+                printf("handling signal: SIGUSR2\n");
                 sigusr2_handler(signo);
             } else if (signo == SIGWINCH) {
-                printf("handling signal: SIGWINCH");
+                printf("handling signal: SIGWINCH\n");
                 sigwinch_handler(signo);
             } else {
-                printf("warning: ignoring unknown signal: %d, %d", signo, SIGINT);
+                printf("warning: ignoring unknown signal: %d\n", signo);
                 continue;
             }
             wakeup_master();
@@ -394,3 +432,4 @@ main(int argc, char** argv)
 
     return 0;
 }
+
