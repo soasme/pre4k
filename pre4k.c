@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/select.h>
 
@@ -11,7 +12,8 @@ typedef enum {false, true} bool;
 void wakeup_master();
 
 int accept_requests = 0;
-int num_workers = 2;
+int num_workers = 1;
+int worker_timeout = 10;
 int graceful_timeout = 20;
 int heartbeat_interval = 5;
 int heartbeat_timeout = 20;
@@ -30,6 +32,12 @@ pre4k_debug()
     printf("heartbeat_timeout: %d\n", heartbeat_timeout);
 }
 
+typedef struct _workers {
+    int count;
+    int current;
+    pid_t workers[1024];
+} Workers;
+
 typedef struct _queue {
     int length;
     int front;
@@ -43,6 +51,11 @@ Queue queue = {
     .front = 0,
     .rear = -1,
     .count = 0,
+};
+
+Workers workers = {
+    .count = 1024,
+    .current = 0,
 };
 
 int
@@ -166,6 +179,30 @@ sigwinch_handler(int signo) {
 }
 
 void
+workers_push(Workers *workers, pid_t pid)
+{
+    if (workers->current > workers->count) {
+        printf("error: too many workers.\n");
+        exit(1);
+    }
+    workers->workers[++workers->count] = pid;
+}
+
+void
+workers_pop(Workers *workers, pid_t pid) {
+    int i = 0;
+    for(; i < workers->count; i++) {
+        if (workers->workers[i] == pid) {
+            break;
+        }
+    }
+    for (; i < workers->count - 1; i++) {
+        workers->workers[i] = workers->workers[i+1];
+    }
+    workers->count--;
+}
+
+void
 pre4k_buff_signals(int signo) {
     printf("info: receive signal: %d\n", signo);
     queue_insert(&queue, signo);
@@ -253,9 +290,35 @@ wakeup_master()
 }
 
 void
+kill_worker(pid_t pid, int signo)
+{
+    int errno;
+    if ((errno = kill(pid, signo)) == -1) {
+        printf("error: pre4k can't find or kill the specified process.\n");
+    } else if (errno == ESRCH) {
+        workers_pop(&workers, pid);
+        // close worker tmp pidfile
+    } else {
+        printf("error: pre4k can't kill worker, pid=%d", pid);
+        exit(1);
+    }
+}
+
+void
+kill_workers(int signo)
+{
+    for(int i = workers.count - 1; i >= 0; i--) {
+        kill_worker(workers.workers[i], signo);
+    }
+}
+
+void
 murder_workers()
 {
-
+    if (worker_timeout == 0) {
+        // no need to murder workers.
+        return;
+    }
 }
 
 void
