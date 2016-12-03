@@ -19,6 +19,17 @@ const char* pidfile = "/tmp/prefork.pid";
 int pipe_fd[2];
 char pipe_buf[2];
 
+void
+pre4k_debug()
+{
+    printf("\n --- pre4k debug info --- \n");
+    printf("accept_requests: %d\n", accept_requests);
+    printf("num_workers: %d\n", num_workers);
+    printf("graceful_timeout: %d\n", graceful_timeout);
+    printf("heartbeat_interval: %d\n", heartbeat_interval);
+    printf("heartbeat_timeout: %d\n", heartbeat_timeout);
+}
+
 typedef struct _queue {
     int length;
     int front;
@@ -108,6 +119,7 @@ void
 sigttin_handler(int signo)
 {
     num_workers += 1;
+    pre4k_debug();
 }
 
 void
@@ -117,6 +129,7 @@ sigttou_handler(int signo)
     if (num_workers < 1) {
         num_workers = 1;
     }
+    pre4k_debug();
 }
 
 void
