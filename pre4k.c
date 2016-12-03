@@ -4,6 +4,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/types.h>
+#include <sys/select.h>
 
 int accept_requests = 0;
 int num_workers = 2;
@@ -12,6 +13,7 @@ int heartbeat_interval = 5;
 int heartbeat_timeout = 20;
 const char* pidfile = "/tmp/prefork.pid";
 int pipe_fd[2];
+char pipe_buf[1];
 
 void
 sigchld_handler(int signo)
@@ -94,14 +96,35 @@ maybe_get_signo()
 void
 sleep_master()
 {
-    printf("sleeping");
+    fd_set set;
+    struct timeval timeout;
+
+    FD_ZERO(&set);
+    FD_SET(pipe_fd[0], &set);
+
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+
+    int ready = select(FD_SETSIZE, &set, NULL, NULL, &timeout);
+    if (ready == 0) {
+        return;
+    } else if (ready < 0) {
+        printf("error: pre4k can't block pipe\n");
+        exit(1);
+    } else {
+        // fixme: EAGAIN, EINTR
+        while(read(pipe_fd[0], &pipe_buf, 1)) {
+            printf("go");
+        }
+    }
 
 }
 
 void
 wakeup_master()
 {
-
+    // fixme: EAGAIN, EINTR
+    write(pipe_fd[1], "", 1);
 }
 
 void
@@ -111,9 +134,9 @@ murder_workers()
 }
 
 void
-set_pipe(int[2] fd) {
+set_pipe(int fd) {
     // set non blocking
-    int flags = fcntl(fd, F_GETTL);
+    int flags = fcntl(fd, F_GETFL);
     flags = flags | O_NONBLOCK;
     fcntl(fd, F_SETFL, flags);
 
@@ -128,10 +151,11 @@ main(int argc, char** argv)
 {
     int signo;
 
-    printf("starting pre4k");
+    printf("starting pre4k\n");
 
     pipe(pipe_fd);
-    set_pipe(pipe_fd);
+    set_pipe(pipe_fd[0]);
+    set_pipe(pipe_fd[1]);
 
     start();
     manage_workers();
