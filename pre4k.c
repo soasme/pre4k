@@ -164,24 +164,21 @@ queue_remove(Queue* queue) {
 void
 sigchld_handler(int signo)
 {
-    printf("handling sigchld\n");
+    printf("debug: handling sigchld\n");
     pid_t pid;
-    while ((pid = waitpid(-1, NULL, WNOHANG)) != -1) {
-        printf("died pid %d\n", pid);
-        workers_pop(&workers, pid);
-    }
-    /*while (true) {
-        pid_t pid;
-        // fixme: we need status in the future.
+    while (true) {
         if ((pid = waitpid(-1, NULL, WNOHANG)) == -1) {
-            printf("wrong, pid: %d, errno %d, ECHILD %d\n", pid, errno, ECHILD);
-            break;
-        } else if (pid == 0) {
-            break;
+            if (errno != ECHILD) {
+                printf("error: can't reap workers\n");
+                exit(1);
+            } else {
+                break;
+            }
         } else {
+            printf("info: process %d died.\n", pid);
             workers_pop(&workers, pid);
         }
-    }*/
+    }
     wakeup_master();
 }
 
