@@ -45,6 +45,45 @@ typedef struct _workers {
     pid_t workers[1024];
 } Workers;
 
+int
+workers_size(Workers *workers) {
+    return workers->current + 1;
+}
+
+void
+workers_push(Workers *workers, pid_t pid)
+{
+    if (workers->current > workers->count) {
+        printf("error: too many workers.\n");
+        exit(1);
+    }
+    workers->workers[++workers->current] = pid;
+}
+
+void
+workers_pop(Workers *workers, pid_t pid) {
+    bool found = false;
+    for (int i = 0; i < workers->current; i++) {
+        if (workers->workers[i] == pid) {
+            found = true;
+        }
+        if (found) {
+            workers->workers[i] = workers->workers[i+1];
+        }
+    }
+    workers->current--;
+}
+
+void
+workers_debug(Workers *workers)
+{
+    printf("debug: workers: ");
+    for(int i = 0; i < workers->current; i++) {
+        printf("%d ", workers->workers[i]);
+    }
+    printf("\n");
+}
+
 typedef struct _queue {
     int length;
     int front;
@@ -125,12 +164,24 @@ queue_remove(Queue* queue) {
 void
 sigchld_handler(int signo)
 {
-    while (true) {
-        pid_t pid;
-        if ((pid = waitpid(-1, NULL, WNOHANG)) == -1) {
-            break;
-        }
+    printf("handling sigchld\n");
+    pid_t pid;
+    while ((pid = waitpid(-1, NULL, WNOHANG)) != -1) {
+        printf("died pid %d\n", pid);
+        workers_pop(&workers, pid);
     }
+    /*while (true) {
+        pid_t pid;
+        // fixme: we need status in the future.
+        if ((pid = waitpid(-1, NULL, WNOHANG)) == -1) {
+            printf("wrong, pid: %d, errno %d, ECHILD %d\n", pid, errno, ECHILD);
+            break;
+        } else if (pid == 0) {
+            break;
+        } else {
+            workers_pop(&workers, pid);
+        }
+    }*/
     wakeup_master();
 }
 
@@ -191,35 +242,6 @@ sigwinch_handler(int signo) {
 
 }
 
-int
-workers_size(Workers *workers) {
-    return workers->current + 1;
-}
-
-void
-workers_push(Workers *workers, pid_t pid)
-{
-    if (workers->current > workers->count) {
-        printf("error: too many workers.\n");
-        exit(1);
-    }
-    workers->workers[++workers->current] = pid;
-}
-
-void
-workers_pop(Workers *workers, pid_t pid) {
-    int i = 0;
-    for(; i < workers->count; i++) {
-        if (workers->workers[i] == pid) {
-            break;
-        }
-    }
-    for (; i < workers->count - 1; i++) {
-        workers->workers[i] = workers->workers[i+1];
-    }
-    workers->count--;
-}
-
 void
 pre4k_buff_signals(int signo) {
     printf("info: receive signal: %d\n", signo);
@@ -272,7 +294,7 @@ spawn_worker()
         // child
         pid = getpid();
         printf("info: spawn worker, pid = %d\n", pid);
-        sleep(10);
+        sleep(2);
         printf("info: worker died.\n");
         exit(0);
     } else {
@@ -427,6 +449,7 @@ main(int argc, char** argv)
     while(1) {
         if ((signo = maybe_get_signo()) == 0) {
             // capture no signals
+            printf("sleeping...\n");
             sleep_master();
             murder_workers();
             manage_workers();
