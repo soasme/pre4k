@@ -1,3 +1,8 @@
+/**
+ *
+ *
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -26,6 +31,7 @@ void
 pre4k_debug()
 {
     printf("\n --- pre4k debug info --- \n");
+    printf("pid: %d\n", getpid());
     printf("accept_requests: %d\n", accept_requests);
     printf("num_workers: %d\n", num_workers);
     printf("graceful_timeout: %d\n", graceful_timeout);
@@ -119,7 +125,13 @@ queue_remove(Queue* queue) {
 void
 sigchld_handler(int signo)
 {
-
+    while (true) {
+        pid_t pid;
+        if ((pid = waitpid(-1, NULL, WNOHANG)) == -1) {
+            break;
+        }
+    }
+    wakeup_master();
 }
 
 void
@@ -191,7 +203,7 @@ workers_push(Workers *workers, pid_t pid)
         printf("error: too many workers.\n");
         exit(1);
     }
-    workers->workers[++workers->count] = pid;
+    workers->workers[++workers->current] = pid;
 }
 
 void
@@ -229,6 +241,10 @@ register_signals()
             exit(1);
         }
     }
+    if (signal(SIGCHLD, sigchld_handler) == SIG_ERR) {
+        printf("register chld signals failed.\n");
+        exit(1);
+    }
 }
 
 
@@ -245,9 +261,32 @@ start()
 }
 
 void
+spawn_worker()
+{
+    pid_t pid;
+
+    if ((pid = fork()) < 0) {
+        printf("error: pre4k fork failed. \n");
+        exit(1);
+    } else if (pid == 0) {
+        // child
+        pid = getpid();
+        printf("info: spawn worker, pid = %d\n", pid);
+        sleep(10);
+        printf("info: worker died.\n");
+        exit(0);
+    } else {
+        // parent
+        workers_push(&workers, pid);
+    }
+}
+
+void
 manage_workers()
 {
-
+    if (workers_size(&workers) < num_workers) {
+        spawn_worker();
+    }
 }
 
 int
@@ -275,13 +314,11 @@ sleep_master()
 
     int ready = select(FD_SETSIZE, &rset, NULL, NULL, &timeout);
     if (ready <= 0) {
-        // printf("debug: sleeping...\n");
         return;
     } else {
         // fixme: EAGAIN, EINTR
-        if (read(pipe_fd[0], &pipe_buf, 1) != 1) {
-            printf("error: unexpected read: %s", pipe_buf);
-            exit(1);
+        while (read(pipe_fd[0], &pipe_buf, 1) != 1) {
+            continue;
         }
     }
 
@@ -375,6 +412,8 @@ main(int argc, char** argv)
 
     printf("starting pre4k\n");
 
+    close(pipe_fd[0]);
+    close(pipe_fd[1]);
     pipe(pipe_fd);
     set_pipe(pipe_fd[0]);
     set_pipe(pipe_fd[1]);
